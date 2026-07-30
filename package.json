@@ -1,0 +1,24 @@
+{
+  "name": "agent-edge-gateway",
+  "version": "0.1.0",
+  "description": "Edge-layer AI-agent gateway: detect AI crawlers at the CDN edge and fork the response (pass through, AI-optimize, block, or 402 payment required).",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "keywords": [
+    "cloudflare-workers",
+    "edge",
+    "ai-agents",
+    "bot-detection",
+    "x402",
+    "pay-per-crawl",
+    "cdn"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}

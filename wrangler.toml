@@ -1,0 +1,15 @@
+name = "agent-edge-gateway"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+# --- Configuration (set real values before deploying) ---
+[vars]
+# ORIGIN_URL     = "https://origin.example.com"   # where human traffic goes
+# LICENSE_URL    = "https://example.com/license"  # machine-readable terms
+# PAYMENT_NETWORK = "base"                          # x402 settlement network
+# FACILITATOR_URL = "https://facilitator.example"  # payment verifier/settler
+# PAYOUT_ADDRESS  = "0x..."                         # where funds settle
+
+# TLS/bot-management signals (request.cf.botManagement, ja4) require a paid
+# Cloudflare Bot Management plan. On free plans, feed JA3/JA4 via an
+# upstream header (x-tls-ja4) instead — see src/fingerprint.js.
