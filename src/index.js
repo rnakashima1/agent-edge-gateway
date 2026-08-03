@@ -47,9 +47,11 @@ function logDecision(url, cls, action) {
       path: url.pathname,
       kind: cls.kind,
       agent: cls.agent?.name || null,
+      vendor: cls.agent?.vendor || null,
       verified: cls.verified,
       intent: cls.intent,
       action: action.action,
+      reason: action.reason,
       signals: cls.signals,
     })
   );

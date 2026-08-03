@@ -46,6 +46,37 @@ No single signal is trusted; `src/detect.js` combines them into a score + intent
 Intent is bucketed as `training` \| `indexing` \| `live_search`, because you
 usually price and treat them differently.
 
+## Per-lab policy (frontier-lab routing)
+
+Every agent is tagged with a `vendor` — the frontier lab / operator behind it
+(`openai`, `anthropic`, `perplexity`, `google`, `bytedance`, …; see `VENDORS`
+in `config/agents.js`). Policy resolves in two layers (`config/policy.js`):
+
+1. **`rules`** — per-intent defaults for the path (apply to every lab)
+2. **`perVendor`** — per-lab overrides, keyed `vendor → intent`
+
+A `perVendor[vendor][intent]` entry wins over the path default; anything not
+overridden falls back to the default, so a lab you haven't listed still gets
+baseline coverage. This is what lets you treat labs differently on the *same*
+page — e.g. give a licensing partner free/cheap access while charging or
+blocking a lab you have no deal with:
+
+| Request (`/article/*`, training intent) | Default | Effective |
+|------------------------------------------|---------|-----------|
+| Anthropic `ClaudeBot` (partner)          | monetize $0.01 | **optimize (free)** |
+| OpenAI `GPTBot` (no deal)                 | monetize $0.01 | **block (403)** |
+| ByteDance `Bytespider`                    | monetize $0.01 | **block (403)** |
+| Google-Extended (unlisted)               | monetize $0.01 | monetize $0.01 |
+
+| Request (`/premium/*`, live_search)      | Default | Effective |
+|------------------------------------------|---------|-----------|
+| OpenAI `ChatGPT-User`                     | monetize $0.05 | **$0.08** |
+| Anthropic `Claude-User` (partner)         | monetize $0.05 | **$0.03** |
+| Perplexity `Perplexity-User`              | monetize $0.05 | **$0.04** |
+
+Add or retune a lab by editing the `perVendor` map for the relevant path — no
+code changes needed.
+
 ## Layout
 
 ```
@@ -57,8 +88,8 @@ src/
   transform.js    Builds the AI-optimized response variant
   payment.js      402 challenge + x402 verification (facilitator stub)
 config/
-  agents.js       Known agent registry (UA patterns, verify method, intent)
-  policy.js       Per-path business rules
+  agents.js       Agent registry + VENDORS (UA, verify method, vendor, intent)
+  policy.js       Per-path rules + per-vendor (frontier-lab) overrides
 wrangler.toml     Cloudflare Worker config
 ```
 
