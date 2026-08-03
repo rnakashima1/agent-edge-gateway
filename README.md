@@ -87,11 +87,73 @@ src/
   decide.js       Policy engine (allow / optimize / block / monetize)
   transform.js    Builds the AI-optimized response variant
   payment.js      402 challenge + x402 verification (facilitator stub)
+  config-store.js KV load/save + validation for the policy doc (seed fallback)
+  admin.js        Token-gated policy editor API (/__policy/api/*)
+  admin-ui.js     The editor page (served at /__policy/ui)
 config/
   agents.js       Agent registry + VENDORS (UA, verify method, vendor, intent)
-  policy.js       Per-path rules + per-vendor (frontier-lab) overrides
-wrangler.toml     Cloudflare Worker config
+  policy.js       Zones, the editable policy-doc schema + seed, and resolver
+wrangler.toml     Cloudflare Worker config + KV binding
 ```
+
+## Editable pricing config (KV + admin UI)
+
+The per-vendor pricing/action matrix lives in **Cloudflare KV** (binding
+`POLICY_KV`), so you retune it without a redeploy. If KV is empty or
+unreachable the Worker falls back to the seed in `DEFAULT_POLICY_DOC`
+(`config/policy.js`). Reads are cached in-isolate for ~10s.
+
+Each cell in the matrix is a decision for one **(zone → lab → bucket)**, where
+the three buckets are exactly:
+
+- **AI Live Search** — RAG / real-time agent fetches answering a user now
+- **AI Indexing** — answer-engine / search crawlers
+- **AI Training** — corpus-building crawlers
+
+The **editor** at `/__policy/ui` renders one grid per zone: a *Default (all
+labs)* row plus a row per frontier lab, columns for the three buckets, each an
+action select (`pass` / `optimize` / `block` / `monetize`) with a USD price
+field shown only for `monetize`. Lab rows can be `inherit` (no override → use
+the zone default).
+
+### Setup
+
+```bash
+# 1. Create the KV namespace and paste the printed ids into wrangler.toml
+npx wrangler kv namespace create POLICY_KV
+npx wrangler kv namespace create POLICY_KV --preview
+
+# 2. Set the admin token (gates /__policy/api/*)
+npx wrangler secret put ADMIN_TOKEN        # production
+echo 'ADMIN_TOKEN = "dev-secret-change-me"' > .dev.vars   # local dev (gitignored)
+
+# 3. Run, then open the editor
+npx wrangler dev
+open http://localhost:8787/__policy/ui
+```
+
+### API (bearer `ADMIN_TOKEN`)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/__policy/api/meta` | zones, vendor list, intents, actions |
+| GET | `/__policy/api/config` | current policy doc |
+| PUT | `/__policy/api/config` | validate + save (400 with `errors[]` on bad input) |
+
+```bash
+# Read current config
+curl -H "authorization: Bearer $ADMIN_TOKEN" localhost:8787/__policy/api/config
+
+# Change a price and save
+curl -X PUT -H "authorization: Bearer $ADMIN_TOKEN" \
+  -H "content-type: application/json" --data @policy.json \
+  localhost:8787/__policy/api/config
+```
+
+The API is disabled (503) until `ADMIN_TOKEN` is set, and the UI shell is the
+only unauthenticated route. Invalid docs are rejected (unknown action, negative
+price, missing default bucket, unknown intent key), so a bad save can't brick
+routing.
 
 ## Run locally
 

@@ -1,11 +1,15 @@
-// Policy engine: turn a classification + the page rules into a concrete action.
+// Policy engine: turn a classification + the live policy doc into a concrete
+// action.
 //
-// Returns { action, priceUsd?, reason }.
+// Returns { action, priceUsd?, vendor?, reason }.
 //   action: "pass" | "optimize" | "block" | "monetize"
+//
+// The policy doc is loaded from KV (src/config-store.js) and passed in, so
+// pricing/actions can be edited from the admin UI without a redeploy.
 
-import { policyFor } from "../config/policy.js";
+import { resolve, zoneNameFor } from "../config/policy.js";
 
-export function decide(classification, url) {
+export function decide(classification, url, policyDoc) {
   const { kind, verified, intent, agent } = classification;
   const vendor = agent && agent.vendor;
 
@@ -14,15 +18,15 @@ export function decide(classification, url) {
     return { action: "pass", reason: "human" };
   }
 
-  // Undeclared bots have no billing identity and no intent. Apply the path's
+  // Undeclared bots have no billing identity and no intent. Apply the zone's
   // default (usually "pass"); tighten to "block" here if you run strict.
   if (kind === "suspected_bot") {
     return { action: "pass", reason: "undeclared-bot-default" };
   }
 
-  // Known agent: look up the page rule for its vendor (frontier lab) + intent.
-  // A per-vendor override wins over the path default; see config/policy.js.
-  const rule = policyFor(url, intent, vendor);
+  // Known agent: resolve zone (from path) + vendor (frontier lab) + intent.
+  const zone = zoneNameFor(url);
+  const rule = resolve(policyDoc, zone, vendor, intent);
 
   // You cannot bill or trust an identity you couldn't verify. Downgrade:
   //   monetize -> block, optimize -> block. pass/block unchanged.
@@ -34,5 +38,8 @@ export function decide(classification, url) {
     };
   }
 
-  return { ...rule, reason: `${vendor}:${intent}:${rule.action}(${rule.source})` };
+  return {
+    ...rule,
+    reason: `${zone}:${vendor}:${intent}:${rule.action}(${rule.source})`,
+  };
 }

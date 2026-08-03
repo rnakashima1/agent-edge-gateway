@@ -1,109 +1,128 @@
-// Per-path business rules — the "page-level business rules layer."
+// Business-rules model, now split into:
+//   - ZONES: which paths map to which named policy zone (structural, in code)
+//   - DEFAULT_POLICY_DOC: the editable pricing/action config (the *seed* + the
+//     fallback used when KV is empty or unreachable). At runtime this is
+//     overlaid by whatever is stored in KV — see src/config-store.js.
 //
-// Rules are evaluated top to bottom; first matching `test` wins. Each rule
-// declares, per intent, what to do with a *verified* agent:
-//   "pass"     serve the normal origin response
-//   "optimize" serve the AI-optimized variant (transform.js)
-//   "block"    403 deny
-//   "monetize" 402 Payment Required (payment.js), with a price
+// A policy doc is a plain JSON object so it can live in KV and be edited from
+// the admin UI without a redeploy:
 //
-// Two layers of specificity, resolved by policyFor():
-//   1. `rules`     — per-intent defaults for the path (applies to every lab)
-//   2. `perVendor` — per-frontier-lab overrides, keyed by vendor slug
-//                    (see VENDORS in agents.js), then by intent
+//   {
+//     version, updatedAt,
+//     zones: {
+//       <zoneName>: {
+//         label,
+//         defaults: { live_search, indexing, training },   // applies to all labs
+//         vendors:  { <vendorSlug>: { live_search?, indexing?, training? } }
+//       }
+//     }
+//   }
 //
-// A perVendor[vendor][intent] entry wins over rules[intent]. This is what lets
-// OpenAI, Anthropic, Perplexity, Google, etc. each get different treatment on
-// the same page — e.g. give a licensing partner cheaper (or free) access while
-// charging or blocking a lab you have no deal with.
+// Each cell is a decision: { action, priceUsd? }
+//   action: "pass" | "optimize" | "block" | "monetize"  (price only for monetize)
 //
-// Unverified agents claiming a known UA are downgraded one step (monetize ->
-// block, optimize -> block) in decide.js, because you can't bill or trust an
-// identity you couldn't verify.
+// Resolution (resolve()): vendor override for the intent wins; otherwise the
+// zone default for the intent; otherwise pass.
 
-export const POLICY = [
+export const INTENTS = ["live_search", "indexing", "training"];
+export const INTENT_LABELS = {
+  live_search: "AI Live Search",
+  indexing: "AI Indexing",
+  training: "AI Training",
+};
+export const ACTIONS = ["pass", "optimize", "block", "monetize"];
+
+// Path → zone mapping. First match wins. Kept in code (structural), not KV.
+export const ZONES = [
   {
-    // Premium / paywalled content: charge live-search + indexing agents,
-    // block bulk training scrapers outright — then override per lab.
+    name: "premium",
+    label: "Premium / paywalled  (/premium/*)",
     test: (url) => url.pathname.startsWith("/premium/"),
-    rules: {
-      training: { action: "block" },
-      indexing: { action: "monetize", priceUsd: 0.02 },
-      live_search: { action: "monetize", priceUsd: 0.05 },
-    },
-    perVendor: {
-      // Licensing partner: allow training at a negotiated rate, premium
-      // live-search still billed but at the partner rate.
-      anthropic: {
-        training: { action: "monetize", priceUsd: 0.008 },
-        live_search: { action: "monetize", priceUsd: 0.03 },
-      },
-      // No deal in place: charge OpenAI a premium for live answers.
-      openai: {
-        live_search: { action: "monetize", priceUsd: 0.08 },
-      },
-      // Perplexity drives referral clicks — let it index premium, still bill
-      // live answers at a modest rate.
-      perplexity: {
-        indexing: { action: "optimize" },
-        live_search: { action: "monetize", priceUsd: 0.04 },
-      },
-    },
   },
   {
-    // Public articles: let indexing + live-search agents in on the optimized
-    // variant (you *want* to be cited), monetize training corpora — per lab.
+    name: "article",
+    label: "Public articles  (/article/*)",
     test: (url) => url.pathname.startsWith("/article/"),
-    rules: {
-      training: { action: "monetize", priceUsd: 0.01 },
-      indexing: { action: "optimize" },
-      live_search: { action: "optimize" },
-    },
-    perVendor: {
-      // Partner: training is free/optimized under the license agreement.
-      anthropic: {
-        training: { action: "optimize" },
-      },
-      // No training deal: block OpenAI training crawl, but welcome its
-      // live-search agent (drives attributed traffic).
-      openai: {
-        training: { action: "block" },
-      },
-      // ByteDance / Bytespider: block outright regardless of intent.
-      bytedance: {
-        training: { action: "block" },
-        indexing: { action: "block" },
-        live_search: { action: "block" },
-      },
-    },
   },
   {
-    // Default: everything else passes through untouched.
+    name: "default",
+    label: "Everything else",
     test: () => true,
-    rules: {
-      training: { action: "pass" },
-      indexing: { action: "pass" },
-      live_search: { action: "pass" },
-    },
   },
 ];
 
+export function zoneNameFor(url) {
+  return (ZONES.find((z) => z.test(url)) || ZONES[ZONES.length - 1]).name;
+}
+
+// Seed / fallback pricing. Edit via the admin UI once KV is populated; this is
+// what a fresh deployment starts from.
+export const DEFAULT_POLICY_DOC = {
+  version: 2,
+  updatedAt: null,
+  zones: {
+    premium: {
+      label: "Premium / paywalled  (/premium/*)",
+      defaults: {
+        live_search: { action: "monetize", priceUsd: 0.05 },
+        indexing: { action: "monetize", priceUsd: 0.02 },
+        training: { action: "block" },
+      },
+      vendors: {
+        anthropic: {
+          live_search: { action: "monetize", priceUsd: 0.03 },
+          training: { action: "monetize", priceUsd: 0.008 },
+        },
+        openai: {
+          live_search: { action: "monetize", priceUsd: 0.08 },
+        },
+        perplexity: {
+          indexing: { action: "optimize" },
+          live_search: { action: "monetize", priceUsd: 0.04 },
+        },
+      },
+    },
+    article: {
+      label: "Public articles  (/article/*)",
+      defaults: {
+        live_search: { action: "optimize" },
+        indexing: { action: "optimize" },
+        training: { action: "monetize", priceUsd: 0.01 },
+      },
+      vendors: {
+        anthropic: { training: { action: "optimize" } },
+        openai: { training: { action: "block" } },
+        bytedance: {
+          training: { action: "block" },
+          indexing: { action: "block" },
+          live_search: { action: "block" },
+        },
+      },
+    },
+    default: {
+      label: "Everything else",
+      defaults: {
+        live_search: { action: "pass" },
+        indexing: { action: "pass" },
+        training: { action: "pass" },
+      },
+      vendors: {},
+    },
+  },
+};
+
 /**
- * Resolve the action for a request.
- * @param url    URL object
- * @param intent "training" | "indexing" | "live_search"
- * @param vendor frontier-lab slug (agents.js `vendor`), or undefined
+ * Resolve a decision from a (possibly KV-loaded) policy doc.
+ * @param doc      policy doc (DEFAULT_POLICY_DOC shape)
+ * @param zoneName from zoneNameFor(url)
+ * @param vendor   frontier-lab slug, or undefined
+ * @param intent   "live_search" | "indexing" | "training"
  */
-export function policyFor(url, intent, vendor) {
-  const rule = POLICY.find((r) => r.test(url));
+export function resolve(doc, zoneName, vendor, intent) {
+  const zone = (doc && doc.zones && doc.zones[zoneName]) || {};
+  const vendorRule = zone.vendors && zone.vendors[vendor] && zone.vendors[vendor][intent];
+  if (vendorRule) return { ...vendorRule, vendor, source: "vendor" };
 
-  // Per-vendor override wins when present for this vendor + intent.
-  const vendorRules = rule.perVendor && rule.perVendor[vendor];
-  if (vendorRules && vendorRules[intent]) {
-    return { ...vendorRules[intent], vendor, source: "vendor" };
-  }
-
-  // Otherwise fall back to the path-level default for this intent.
-  const base = (rule.rules && rule.rules[intent]) || { action: "pass" };
+  const base = (zone.defaults && zone.defaults[intent]) || { action: "pass" };
   return { ...base, vendor, source: "default" };
 }

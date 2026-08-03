@@ -2,6 +2,16 @@ name = "agent-edge-gateway"
 main = "src/index.js"
 compatibility_date = "2025-01-01"
 
+# --- KV: the editable per-vendor policy/pricing config -------------------
+# Create the namespace, then paste the ids it prints:
+#   npx wrangler kv namespace create POLICY_KV
+#   npx wrangler kv namespace create POLICY_KV --preview
+# Local `wrangler dev` simulates KV automatically (ids can stay as placeholders).
+[[kv_namespaces]]
+binding = "POLICY_KV"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+preview_id = "REPLACE_WITH_KV_PREVIEW_ID"
+
 # --- Configuration (set real values before deploying) ---
 [vars]
 # ORIGIN_URL     = "https://origin.example.com"   # where human traffic goes
@@ -9,6 +19,12 @@ compatibility_date = "2025-01-01"
 # PAYMENT_NETWORK = "base"                          # x402 settlement network
 # FACILITATOR_URL = "https://facilitator.example"  # payment verifier/settler
 # PAYOUT_ADDRESS  = "0x..."                         # where funds settle
+
+# ADMIN_TOKEN gates the policy editor API (/__policy/api/*). Do NOT put it here
+# (it's a secret) — set it for production with:
+#   npx wrangler secret put ADMIN_TOKEN
+# For local dev, put it in .dev.vars (gitignored):
+#   ADMIN_TOKEN = "dev-secret-change-me"
 
 # TLS/bot-management signals (request.cf.botManagement, ja4) require a paid
 # Cloudflare Bot Management plan. On free plans, feed JA3/JA4 via an

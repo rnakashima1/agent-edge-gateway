@@ -13,6 +13,8 @@ import { classify } from "./detect.js";
 import { decide } from "./decide.js";
 import { toAgentVariant } from "./transform.js";
 import { requirePayment } from "./payment.js";
+import { getPolicyDoc } from "./config-store.js";
+import { handleAdmin } from "./admin.js";
 
 // Replace with your real origin (or a service binding). For local dev this
 // echoes a tiny sample page so the fork is observable without a backend.
@@ -61,8 +63,15 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
+    // Admin surface (policy editor + API). Handled before classification so it
+    // is never bot-forked or monetized; it is token-gated in admin.js.
+    if (url.pathname === "/__policy" || url.pathname.startsWith("/__policy/")) {
+      return handleAdmin(request, url, env);
+    }
+
+    const policyDoc = await getPolicyDoc(env);
     const cls = await classify(request, env);
-    const action = decide(cls, url);
+    const action = decide(cls, url, policyDoc);
     logDecision(url, cls, action);
 
     switch (action.action) {
