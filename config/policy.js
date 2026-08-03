@@ -1,28 +1,24 @@
-// Business-rules model, now split into:
-//   - ZONES: which paths map to which named policy zone (structural, in code)
-//   - DEFAULT_POLICY_DOC: the editable pricing/action config (the *seed* + the
-//     fallback used when KV is empty or unreachable). At runtime this is
-//     overlaid by whatever is stored in KV — see src/config-store.js.
+// Business-rules model: a single site-wide matrix of per-vendor decisions.
 //
-// A policy doc is a plain JSON object so it can live in KV and be edited from
-// the admin UI without a redeploy:
+// (Earlier versions split traffic into path "zones" like /premium vs /article.
+// The target sites — localnewsmatters.org, mendovoice.com — have no such
+// structure, so policy is now flat: one set of defaults for all labs, plus
+// per-frontier-lab overrides. Reintroduce zones later if a site needs them.)
+//
+// The policy doc is plain JSON so it can live in KV and be edited from the
+// admin UI without a redeploy:
 //
 //   {
 //     version, updatedAt,
-//     zones: {
-//       <zoneName>: {
-//         label,
-//         defaults: { live_search, indexing, training },   // applies to all labs
-//         vendors:  { <vendorSlug>: { live_search?, indexing?, training? } }
-//       }
-//     }
+//     defaults: { live_search, indexing, training },   // applies to all labs
+//     vendors:  { <vendorSlug>: { live_search?, indexing?, training? } }
 //   }
 //
 // Each cell is a decision: { action, priceUsd? }
 //   action: "pass" | "optimize" | "block" | "monetize"  (price only for monetize)
 //
-// Resolution (resolve()): vendor override for the intent wins; otherwise the
-// zone default for the intent; otherwise pass.
+// Resolution (resolve()): a vendor override for the intent wins; otherwise the
+// site default for the intent; otherwise pass.
 
 export const INTENTS = ["live_search", "indexing", "training"];
 export const INTENT_LABELS = {
@@ -32,97 +28,39 @@ export const INTENT_LABELS = {
 };
 export const ACTIONS = ["pass", "optimize", "block", "monetize"];
 
-// Path → zone mapping. First match wins. Kept in code (structural), not KV.
-export const ZONES = [
-  {
-    name: "premium",
-    label: "Premium / paywalled  (/premium/*)",
-    test: (url) => url.pathname.startsWith("/premium/"),
-  },
-  {
-    name: "article",
-    label: "Public articles  (/article/*)",
-    test: (url) => url.pathname.startsWith("/article/"),
-  },
-  {
-    name: "default",
-    label: "Everything else",
-    test: () => true,
-  },
-];
-
-export function zoneNameFor(url) {
-  return (ZONES.find((z) => z.test(url)) || ZONES[ZONES.length - 1]).name;
-}
-
-// Seed / fallback pricing. Edit via the admin UI once KV is populated; this is
-// what a fresh deployment starts from.
+// Seed / fallback config. A local-news site generally *wants* to be cited by
+// answer engines and live-search agents (optimize), while charging bulk
+// training crawlers. Edit via the admin UI once KV is populated.
 export const DEFAULT_POLICY_DOC = {
-  version: 2,
+  version: 3,
   updatedAt: null,
-  zones: {
-    premium: {
-      label: "Premium / paywalled  (/premium/*)",
-      defaults: {
-        live_search: { action: "monetize", priceUsd: 0.05 },
-        indexing: { action: "monetize", priceUsd: 0.02 },
-        training: { action: "block" },
-      },
-      vendors: {
-        anthropic: {
-          live_search: { action: "monetize", priceUsd: 0.03 },
-          training: { action: "monetize", priceUsd: 0.008 },
-        },
-        openai: {
-          live_search: { action: "monetize", priceUsd: 0.08 },
-        },
-        perplexity: {
-          indexing: { action: "optimize" },
-          live_search: { action: "monetize", priceUsd: 0.04 },
-        },
-      },
-    },
-    article: {
-      label: "Public articles  (/article/*)",
-      defaults: {
-        live_search: { action: "optimize" },
-        indexing: { action: "optimize" },
-        training: { action: "monetize", priceUsd: 0.01 },
-      },
-      vendors: {
-        anthropic: { training: { action: "optimize" } },
-        openai: { training: { action: "block" } },
-        bytedance: {
-          training: { action: "block" },
-          indexing: { action: "block" },
-          live_search: { action: "block" },
-        },
-      },
-    },
-    default: {
-      label: "Everything else",
-      defaults: {
-        live_search: { action: "pass" },
-        indexing: { action: "pass" },
-        training: { action: "pass" },
-      },
-      vendors: {},
+  defaults: {
+    live_search: { action: "optimize" },
+    indexing: { action: "optimize" },
+    training: { action: "monetize", priceUsd: 0.01 },
+  },
+  vendors: {
+    // Example override: block ByteDance/Bytespider outright. Everything else
+    // inherits the defaults above until you set per-lab rules in the editor.
+    bytedance: {
+      live_search: { action: "block" },
+      indexing: { action: "block" },
+      training: { action: "block" },
     },
   },
 };
 
 /**
  * Resolve a decision from a (possibly KV-loaded) policy doc.
- * @param doc      policy doc (DEFAULT_POLICY_DOC shape)
- * @param zoneName from zoneNameFor(url)
- * @param vendor   frontier-lab slug, or undefined
- * @param intent   "live_search" | "indexing" | "training"
+ * @param doc    policy doc (DEFAULT_POLICY_DOC shape)
+ * @param vendor frontier-lab slug, or undefined
+ * @param intent "live_search" | "indexing" | "training"
  */
-export function resolve(doc, zoneName, vendor, intent) {
-  const zone = (doc && doc.zones && doc.zones[zoneName]) || {};
-  const vendorRule = zone.vendors && zone.vendors[vendor] && zone.vendors[vendor][intent];
+export function resolve(doc, vendor, intent) {
+  const vendorRule =
+    doc && doc.vendors && doc.vendors[vendor] && doc.vendors[vendor][intent];
   if (vendorRule) return { ...vendorRule, vendor, source: "vendor" };
 
-  const base = (zone.defaults && zone.defaults[intent]) || { action: "pass" };
+  const base = (doc && doc.defaults && doc.defaults[intent]) || { action: "pass" };
   return { ...base, vendor, source: "default" };
 }

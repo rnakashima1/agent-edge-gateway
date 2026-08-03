@@ -71,7 +71,7 @@ export default {
 
     const policyDoc = await getPolicyDoc(env);
     const cls = await classify(request, env);
-    const action = decide(cls, url, policyDoc);
+    const action = decide(cls, policyDoc);
     logDecision(url, cls, action);
 
     switch (action.action) {

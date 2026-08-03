@@ -2,7 +2,7 @@
 //
 // Routes (all under /__policy):
 //   GET  /__policy or /__policy/ui   → HTML editor (no token; shell only)
-//   GET  /__policy/api/meta          → vendor/intent/action/zone metadata
+//   GET  /__policy/api/meta          → vendor/intent/action metadata
 //   GET  /__policy/api/config        → current policy doc (from KV or seed)
 //   PUT  /__policy/api/config        → validate + save policy doc to KV
 //
@@ -12,7 +12,7 @@
 
 import { adminUiHtml } from "./admin-ui.js";
 import { getPolicyDoc, putPolicyDoc } from "./config-store.js";
-import { ZONES, INTENTS, INTENT_LABELS, ACTIONS } from "../config/policy.js";
+import { INTENTS, INTENT_LABELS, ACTIONS } from "../config/policy.js";
 import { VENDORS } from "../config/agents.js";
 
 function json(body, status = 200) {
@@ -42,7 +42,6 @@ function meta() {
     .filter((slug) => slug !== "default")
     .map((slug) => ({ slug, label: VENDORS[slug] }));
   return {
-    zones: ZONES.map((z) => ({ name: z.name, label: z.label })),
     vendorList,
     intents: INTENTS,
     intentLabels: INTENT_LABELS,

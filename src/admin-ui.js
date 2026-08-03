@@ -4,10 +4,10 @@
 // the admin token and sends it as a Bearer header on every API call
 // (/__policy/api/*). Nothing is persisted client-side.
 //
-// Grid per zone: rows = "Default (all labs)" + each frontier lab; columns =
-// the three buckets (AI Live Search / AI Indexing / AI Training). Each cell is
-// an action select + a price field (enabled only for "monetize"). Lab rows
-// also offer "inherit" = no override (falls back to the zone default).
+// A single site-wide grid: rows = "Default (all labs)" + each frontier lab;
+// columns = the three buckets (AI Live Search / AI Indexing / AI Training).
+// Each cell is an action select + a price field (enabled only for "monetize").
+// Lab rows also offer "inherit" = no override (falls back to the default).
 //
 // The client script below deliberately uses no template literals or ${...} so
 // it nests cleanly inside this module's own template string.
@@ -73,7 +73,7 @@ export function adminUiHtml() {
 <main>
   <p id="hint" class="muted">Enter the admin token and click Load. Prices are in
     USD per request; charged only when the action is <b>monetize</b>. "Inherit"
-    on a lab row means it falls back to the zone default.</p>
+    on a lab row means it falls back to the default.</p>
   <div id="zones"></div>
 </main>
 <div class="bar">
@@ -122,19 +122,18 @@ export function adminUiHtml() {
     });
   }
 
-  function cellValue(zone, vendorSlug, intent) {
-    var z = DOC.zones[zone] || {};
-    if (vendorSlug === "__default__") return (z.defaults || {})[intent] || { action: "pass" };
-    var v = (z.vendors || {})[vendorSlug];
+  function cellValue(vendorSlug, intent) {
+    if (vendorSlug === "__default__") return (DOC.defaults || {})[intent] || { action: "pass" };
+    var v = (DOC.vendors || {})[vendorSlug];
     return v && v[intent] ? v[intent] : { action: "__inherit__" };
   }
 
-  function buildCell(zone, vendorSlug, intent) {
-    var cur = cellValue(zone, vendorSlug, intent);
+  function buildCell(vendorSlug, intent) {
+    var cur = cellValue(vendorSlug, intent);
     var opts = META.actions.slice();
     if (vendorSlug !== "__default__") opts = ["__inherit__"].concat(opts);
 
-    var sel = el("select", { "data-zone": zone, "data-vendor": vendorSlug, "data-intent": intent });
+    var sel = el("select", { "data-vendor": vendorSlug, "data-intent": intent });
     for (var i=0;i<opts.length;i++) {
       var label = opts[i] === "__inherit__" ? "inherit" : opts[i];
       var o = el("option", { value: opts[i], text: label });
@@ -159,34 +158,30 @@ export function adminUiHtml() {
   function render() {
     var root = document.getElementById("zones");
     root.innerHTML = "";
-    META.zones.forEach(function (z) {
-      var head = el("tr", null, [ el("th", { text: "Lab" }) ].concat(
-        META.intents.map(function (it) { return el("th", { text: META.intentLabels[it] }); })
-      ));
-      var rows = [ el("tr", { "class": "default" }, [ el("td", { "class":"vendor", text:"Default (all labs)" }) ].concat(
-        META.intents.map(function (it) { return el("td", null, [ buildCell(z.name, "__default__", it) ]); })
-      )) ];
-      META.vendorList.forEach(function (v) {
-        rows.push(el("tr", null, [ el("td", { "class":"vendor", text: v.label } ) ].concat(
-          META.intents.map(function (it) { return el("td", null, [ buildCell(z.name, v.slug, it) ]); })
-        )));
-      });
-      var table = el("table", null, [ el("thead", null, [head]), el("tbody", null, rows) ]);
-      root.appendChild(el("section", { "class":"zone" }, [ el("h2", { text: z.label }), table ]));
+    var head = el("tr", null, [ el("th", { text: "Lab" }) ].concat(
+      META.intents.map(function (it) { return el("th", { text: META.intentLabels[it] }); })
+    ));
+    var rows = [ el("tr", { "class": "default" }, [ el("td", { "class":"vendor", text:"Default (all labs)" }) ].concat(
+      META.intents.map(function (it) { return el("td", null, [ buildCell("__default__", it) ]); })
+    )) ];
+    META.vendorList.forEach(function (v) {
+      rows.push(el("tr", null, [ el("td", { "class":"vendor", text: v.label } ) ].concat(
+        META.intents.map(function (it) { return el("td", null, [ buildCell(v.slug, it) ]); })
+      )));
     });
+    var table = el("table", null, [ el("thead", null, [head]), el("tbody", null, rows) ]);
+    root.appendChild(el("section", { "class":"zone" }, [
+      el("h2", { text: "Site-wide policy" }), table
+    ]));
     document.getElementById("updated").textContent =
       DOC.updatedAt ? ("Last saved " + DOC.updatedAt) : "Unsaved (seed defaults)";
   }
 
   function collect() {
-    var doc = { version: DOC.version || 2, zones: {} };
-    META.zones.forEach(function (z) {
-      doc.zones[z.name] = { label: z.label, defaults: {}, vendors: {} };
-    });
-    var sels = document.querySelectorAll("select[data-zone]");
+    var doc = { version: DOC.version || 3, defaults: {}, vendors: {} };
+    var sels = document.querySelectorAll("select[data-vendor]");
     for (var i=0;i<sels.length;i++) {
       var s = sels[i];
-      var zone = s.getAttribute("data-zone");
       var vendor = s.getAttribute("data-vendor");
       var intent = s.getAttribute("data-intent");
       var action = s.value;
@@ -196,10 +191,10 @@ export function adminUiHtml() {
         var price = s.parentNode.querySelector("input.price");
         cell.priceUsd = parseFloat(price.value) || 0;
       }
-      if (vendor === "__default__") doc.zones[zone].defaults[intent] = cell;
+      if (vendor === "__default__") doc.defaults[intent] = cell;
       else {
-        if (!doc.zones[zone].vendors[vendor]) doc.zones[zone].vendors[vendor] = {};
-        doc.zones[zone].vendors[vendor][intent] = cell;
+        if (!doc.vendors[vendor]) doc.vendors[vendor] = {};
+        doc.vendors[vendor][intent] = cell;
       }
     }
     return doc;

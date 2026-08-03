@@ -50,32 +50,29 @@ usually price and treat them differently.
 
 Every agent is tagged with a `vendor` — the frontier lab / operator behind it
 (`openai`, `anthropic`, `perplexity`, `google`, `bytedance`, …; see `VENDORS`
-in `config/agents.js`). Policy resolves in two layers (`config/policy.js`):
+in `config/agents.js`). Policy is a single site-wide matrix (`config/policy.js`)
+resolved in two layers:
 
-1. **`rules`** — per-intent defaults for the path (apply to every lab)
-2. **`perVendor`** — per-lab overrides, keyed `vendor → intent`
+1. **`defaults`** — per-intent decision applied to every lab
+2. **`vendors`** — per-lab overrides, keyed `vendor → intent`
 
-A `perVendor[vendor][intent]` entry wins over the path default; anything not
-overridden falls back to the default, so a lab you haven't listed still gets
-baseline coverage. This is what lets you treat labs differently on the *same*
-page — e.g. give a licensing partner free/cheap access while charging or
-blocking a lab you have no deal with:
+A `vendors[vendor][intent]` entry wins over the default; anything not overridden
+falls back to `defaults`, so a lab you haven't listed still gets baseline
+coverage. This is what lets you treat labs differently — give a licensing
+partner free/cheap access while charging or blocking a lab you have no deal
+with. With the seed config (`defaults`: live-search/indexing `optimize`,
+training `monetize $0.01`; ByteDance blocked):
 
-| Request (`/article/*`, training intent) | Default | Effective |
-|------------------------------------------|---------|-----------|
-| Anthropic `ClaudeBot` (partner)          | monetize $0.01 | **optimize (free)** |
-| OpenAI `GPTBot` (no deal)                 | monetize $0.01 | **block (403)** |
-| ByteDance `Bytespider`                    | monetize $0.01 | **block (403)** |
-| Google-Extended (unlisted)               | monetize $0.01 | monetize $0.01 |
+| Verified agent | Intent | Effective |
+|----------------|--------|-----------|
+| Perplexity `PerplexityBot` | indexing | optimize (free) |
+| OpenAI `GPTBot` | training | monetize $0.01 (default) |
+| Anthropic `ClaudeBot` | training | monetize $0.01 (default) |
+| ByteDance `Bytespider` | any | **block (403)** |
 
-| Request (`/premium/*`, live_search)      | Default | Effective |
-|------------------------------------------|---------|-----------|
-| OpenAI `ChatGPT-User`                     | monetize $0.05 | **$0.08** |
-| Anthropic `Claude-User` (partner)         | monetize $0.05 | **$0.03** |
-| Perplexity `Perplexity-User`              | monetize $0.05 | **$0.04** |
-
-Add or retune a lab by editing the `perVendor` map for the relevant path — no
-code changes needed.
+There are no path/zone distinctions — the target sites
+(localnewsmatters.org, mendovoice.com) are flat, so one matrix covers the whole
+site. Retune any lab in the editor (below) — no code changes needed.
 
 ## Layout
 
@@ -92,7 +89,7 @@ src/
   admin-ui.js     The editor page (served at /__policy/ui)
 config/
   agents.js       Agent registry + VENDORS (UA, verify method, vendor, intent)
-  policy.js       Zones, the editable policy-doc schema + seed, and resolver
+  policy.js       Editable policy-doc schema + seed, and the resolver
 wrangler.toml     Cloudflare Worker config + KV binding
 ```
 
@@ -103,18 +100,18 @@ The per-vendor pricing/action matrix lives in **Cloudflare KV** (binding
 unreachable the Worker falls back to the seed in `DEFAULT_POLICY_DOC`
 (`config/policy.js`). Reads are cached in-isolate for ~10s.
 
-Each cell in the matrix is a decision for one **(zone → lab → bucket)**, where
-the three buckets are exactly:
+Each cell in the matrix is a decision for one **(lab → bucket)**, where the
+three buckets are exactly:
 
 - **AI Live Search** — RAG / real-time agent fetches answering a user now
 - **AI Indexing** — answer-engine / search crawlers
 - **AI Training** — corpus-building crawlers
 
-The **editor** at `/__policy/ui` renders one grid per zone: a *Default (all
+The **editor** at `/__policy/ui` renders one site-wide grid: a *Default (all
 labs)* row plus a row per frontier lab, columns for the three buckets, each an
 action select (`pass` / `optimize` / `block` / `monetize`) with a USD price
 field shown only for `monetize`. Lab rows can be `inherit` (no override → use
-the zone default).
+the default).
 
 ### Setup
 
@@ -136,7 +133,7 @@ open http://localhost:8787/__policy/ui
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET | `/__policy/api/meta` | zones, vendor list, intents, actions |
+| GET | `/__policy/api/meta` | vendor list, intents, actions |
 | GET | `/__policy/api/config` | current policy doc |
 | PUT | `/__policy/api/config` | validate + save (400 with `errors[]` on bad input) |
 
@@ -162,17 +159,20 @@ npm install
 npx wrangler dev
 ```
 
-Then exercise it with different identities and diff the responses:
+Then exercise it with different identities and diff the responses (policy is
+site-wide, so any path behaves the same):
 
 ```bash
-# human
-curl -s http://localhost:8787/article/example | head -20
+# human → normal page
+curl -s http://localhost:8787/any/page | head -20
 
-# declared crawler
-curl -s -A "GPTBot/1.0 (+https://openai.com/gptbot)" http://localhost:8787/article/example | head -20
+# indexing crawler (verified) → optimized variant, 200
+curl -si -A "PerplexityBot/1.0" -H "x-verified-rdns-host: crawl.perplexity.ai" \
+  http://localhost:8787/any/page | head -20
 
-# monetized path → expect 402
-curl -si -A "ClaudeBot/1.0" http://localhost:8787/premium/report | head -20
+# training crawler (verified) → monetized, expect 402
+curl -si -A "GPTBot/1.0" -H "x-verified-rdns-host: x.gptbot.openai.com" \
+  http://localhost:8787/any/page | head -20
 ```
 
 ## Reverse-engineering someone else's gateway (black-box)

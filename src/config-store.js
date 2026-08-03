@@ -76,41 +76,26 @@ function validateIntentMap(map, where, errors, { requireAll }) {
 export function validatePolicyDoc(input) {
   const errors = [];
   if (!isPlainObject(input)) return { ok: false, errors: ["doc must be an object"] };
-  if (!isPlainObject(input.zones)) return { ok: false, errors: ["doc.zones must be an object"] };
 
-  const zones = {};
-  for (const [zoneName, zone] of Object.entries(input.zones)) {
-    if (!isPlainObject(zone)) {
-      errors.push(`zones.${zoneName}: must be an object`);
-      continue;
-    }
-    const defaults = validateIntentMap(
-      zone.defaults || {},
-      `zones.${zoneName}.defaults`,
-      errors,
-      { requireAll: true }
-    );
-    const vendors = {};
-    if (zone.vendors != null) {
-      if (!isPlainObject(zone.vendors)) {
-        errors.push(`zones.${zoneName}.vendors: must be an object`);
-      } else {
-        for (const [vendor, vmap] of Object.entries(zone.vendors)) {
-          const cells = validateIntentMap(
-            vmap,
-            `zones.${zoneName}.vendors.${vendor}`,
-            errors,
-            { requireAll: false }
-          );
-          if (Object.keys(cells).length) vendors[vendor] = cells;
-        }
+  const defaults = validateIntentMap(
+    input.defaults || {},
+    "defaults",
+    errors,
+    { requireAll: true }
+  );
+
+  const vendors = {};
+  if (input.vendors != null) {
+    if (!isPlainObject(input.vendors)) {
+      errors.push("vendors: must be an object");
+    } else {
+      for (const [vendor, vmap] of Object.entries(input.vendors)) {
+        const cells = validateIntentMap(vmap, `vendors.${vendor}`, errors, {
+          requireAll: false,
+        });
+        if (Object.keys(cells).length) vendors[vendor] = cells;
       }
     }
-    zones[zoneName] = {
-      label: typeof zone.label === "string" ? zone.label : zoneName,
-      defaults,
-      vendors,
-    };
   }
 
   if (errors.length) return { ok: false, errors };
@@ -120,7 +105,8 @@ export function validatePolicyDoc(input) {
     doc: {
       version: Number(input.version) || DEFAULT_POLICY_DOC.version,
       updatedAt: input.updatedAt || null,
-      zones,
+      defaults,
+      vendors,
     },
   };
 }
